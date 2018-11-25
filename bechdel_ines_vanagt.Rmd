@@ -1,0 +1,345 @@
+---
+title: "My Bechdel test"
+author: "Ines VANAGT"
+date: "2 novembre 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction: 
+
+To design my own Bechdel test, I have chosen to focus on the cast, just like the original Bechdel test.
+
+First, I would like to include a metric for the proportion of female lead actors, since I think it is one of the most obvious gender bias that one may note in movies.
+
+However, I think it is not enough, and this is why I would also like to look at the supporting cast. Indeed, I think that although most directors and crews do not intend to broadcast sexist "clich??s", they do so by presenting male supporting actors by default rather than female (e.g. for police inspectors, doctos, presidents, and even crowds, to name only a few documented by FiveThirtyEight...).
+
+My hypothesis is that more than 50% of the movies (that is to say 25/50) have less than 50% of lead actors that are women or less than 50% of supporting actors that are women.
+
+# Loading packages
+
+I start by loading the required packages.
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(base)
+```
+
+
+# Getting the data
+
+First I would like to get the "next-bechdel_allTests" recap table from FiveThirtyEight to be able to compare my results with these of those tests and to check the consistency and assess my own test.
+
+```{r, message=FALSE}
+new_bechdel <- read_csv("https://raw.githubusercontent.com/fivethirtyeight/data/master/next-bechdel/nextBechdel_allTests.csv")
+```
+
+I would now like to get the cast gender data to do my own analyses.
+
+```{r, message=FALSE, warning =FALSE}
+cast_gender <- read_csv("https://raw.githubusercontent.com/fivethirtyeight/data/master/next-bechdel/nextBechdel_castGender.csv")
+```
+
+
+# Exploring the data
+
+```{r}
+# Exploring the data using the 5 functions we always have to run (not View because it prevents the file from knitting)
+cast_gender %>% dim()
+cast_gender %>% names()
+cast_gender %>% summary()
+cast_gender %>% head(6)
+
+# Having a look at the different actors types listed in the file
+cast_gender %>% distinct(TYPE)
+```
+
+I looked online for the definition of "cameo" and "ensemble cast".
+
+_Cameo_ : brief appearance or voice part of a known person in a work of the performing arts, typically unnamed or appearing as themselves. These roles are generally small, many of them non-speaking ones.
+(https://en.wikipedia.org/wiki/Cameo_appearance)
+
+_Ensemble Cast_ : An ensemble cast is made up of cast members in which multiple principal actors and performers are assigned roughly equal amounts of importance and screen time in a dramatic production.
+(https://en.wikipedia.org/wiki/Ensemble_cast)
+
+In view of the different types and of the hypothesis I formulated above, I will group together Cameos and Supporting actors under the name "Supporting Cast" as they both play small roles, mostly non-speaking ; I will also group together Leading and Lead Ensemble Member under the name "Leading Cast" as they both play important roles.
+
+I will ignore the types "Unknown" and "23".
+
+# Cleaning and mapping the data
+
+```{r}
+# Cleaning the data
+cast_gender_filtered <- cast_gender %>%
+  filter(TYPE != "Unknown" &  TYPE != "23" &  GENDER != "Unknown")
+cast_gender_filtered %>% distinct(TYPE)
+
+# Mapping the data
+cast_gender_filtered_mapped <- cast_gender_filtered %>% 
+  mutate(type_iva = case_when(
+  TYPE == "Leading" | TYPE == "Lead Ensemble Member" ~ "Leading Cast",
+  TYPE == "Supporting" | TYPE == "Cameo" ~ "Supporting Cast"
+)) %>% 
+  select(MOVIE, GENDER, type_iva)
+cast_gender_filtered_mapped %>% head()
+```
+
+# Getting the proportions in a table
+
+```{r}
+# Getting the number of leading actors in each movie
+nb_leading <- cast_gender_filtered_mapped %>% 
+  filter(type_iva == "Leading Cast") %>% 
+  group_by(MOVIE) %>% 
+  summarise(nb_leading_cast = n())
+# Getting the number of female leading actors in each movie
+nb_leading_female <- cast_gender_filtered_mapped %>% 
+  filter(type_iva == "Leading Cast" & GENDER == "Female") %>% 
+  group_by(MOVIE) %>% 
+  summarise(nb_leading_cast_female = n())
+  
+# Merging both tables for Leading Actors and replacing the NA by 0
+proportions_table_leading <- full_join(nb_leading, nb_leading_female)
+proportions_table_leading[is.na(proportions_table_leading)] <- 0
+
+# Getting the number of supporting actors in each movie
+nb_supporting <- cast_gender_filtered_mapped %>% 
+  filter(type_iva == "Supporting Cast") %>% 
+  group_by(MOVIE) %>% 
+  summarise(nb_supporting_cast = n())
+# Getting the number of female supporting actors in each movie
+nb_supporting_female <- cast_gender_filtered_mapped %>% 
+  filter(type_iva == "Supporting Cast" & GENDER == "Female") %>% 
+  group_by(MOVIE) %>% 
+  summarise(nb_supporting_cast_female = n())
+  
+# Merging both tables for Leading Actors and replacing the NA by 0
+proportions_table_supporting <- full_join(nb_supporting, nb_supporting_female)
+proportions_table_supporting[is.na(proportions_table_supporting)] <- 0
+
+# Merging the Leading and Supporting tables to get all the info we need to test movies in the same table
+proportions_table <- full_join(proportions_table_leading, proportions_table_supporting) %>% 
+  mutate(prop_female_leading = round(nb_leading_cast_female / nb_leading_cast, 2)) %>% 
+  mutate(prop_female_supporting = round(nb_supporting_cast_female / nb_supporting_cast, 2))
+proportions_table
+```
+
+
+# Exploration 1
+
+I want to explore "A film fails if less than 50 % of its leading actors are women or if less than 50% of its supporting actors are women"
+
+```{r}
+test_table <- proportions_table %>% 
+  mutate(iva_bechdel_num = case_when(
+         prop_female_leading >= 0.5 & prop_female_supporting >= 0.5 ~ 1,
+         prop_female_leading < 0.5 | prop_female_supporting < 0.5 ~ 0
+         )) %>% 
+  mutate(iva_bechdel = case_when(
+         prop_female_leading >= 0.5 & prop_female_supporting >= 0.5 ~ "PASS",
+         prop_female_leading < 0.5 | prop_female_supporting < 0.5 ~ "FAIL"
+         ))
+test_table
+```
+
+I want to check how many movies pass this test:
+
+```{r}
+test_table %>% summarise(nb_pass = sum(iva_bechdel_num))
+```
+
+Only 3 movies pass this test. I want to check which movies are passing the test:
+
+```{r}
+test_table %>% filter(iva_bechdel_num == 1) 
+```
+
+```{r}
+ggplot(data = test_table) +
+  aes(x = prop_female_leading, y = prop_female_supporting, color = iva_bechdel) +
+  ylim(0,1) +
+  xlim(0,1) +
+  geom_point(size = 3) +
+  ggtitle("2016 top 50 movies' proportions of female leading and supporting actors", subtitle = "for movies passing and failing the iva_bechdel test") +
+  xlab("Proportion of female leading actors") +
+  ylab("Proportion of female supporting actors") 
+```
+
+This graph is a scatterplot of the proportion of female leading actors and of the proportion of female supporting actors for 2016 top 50 movies, both passing or failing the iva_bechdel test. 
+
+This graph shows that only 3 movies pass this iva_bechdel test. To pass the test, a movie needs to be located in the upper-right square section of this graph.
+
+Once this is clear, we can draw two different conclusions:
+- either 47 movies out of 50 are broadcasting gender bias
+- or the iva_bechdel test is too strict and needs to be refined.
+
+Let's say that we are indulgent and that we admit that the test is a bit strict. 
+Indeed, we notice that the lower-right square section of the graph shows many movies with more than 50 % of women in leading roles, but between 25 and 50% of females in supporting roles (whereas the upper-left section only shows 3 movies with more than 50% of females in supporting roles and less than 50% of women in leading roles).
+Maybe we could lower our expectations for supporting roles if the proportion of females in leading roles is superior to 50%, because we consider that having more than 50% of females in leading roles is already quite good. 
+
+# Exploration 2
+
+I now want to explore "A films fails if less than 50 % of its leading actors are women or if less than 30% of its supporting actors are women"
+
+```{r}
+test_table_v2 <- test_table %>% 
+  mutate(iva_bechdel_num_v2 = case_when(
+         prop_female_leading >= 0.5 & prop_female_supporting >= 0.3 ~ 1,
+         prop_female_leading < 0.5 | prop_female_supporting < 0.3 ~ 0
+         )) %>% 
+  mutate(iva_bechdel_v2 = case_when(
+         prop_female_leading >= 0.5 & prop_female_supporting >= 0.3 ~ "PASS",
+         prop_female_leading < 0.5 | prop_female_supporting < 0.3 ~ "FAIL"
+         ))
+test_table_v2
+```
+
+I want to check how many movies pass this test:
+
+```{r}
+test_table_v2 %>% summarise(nb_pass = sum(iva_bechdel_num_v2))
+```
+
+Now 15 movies pass this test, which is much better but still not great. I want to check which movies are passing the test:
+
+```{r}
+test_table_v2 %>% filter(iva_bechdel_num_v2 == 1) 
+```
+
+```{r}
+ggplot(data = test_table_v2) +
+  aes(x = prop_female_leading, y = prop_female_supporting, color = iva_bechdel_v2) +
+  ylim(0,1) +
+  xlim(0,1) +
+  geom_point(size = 3) +
+  ggtitle("2016 top 50 movies' proportions of female leading and supporting actors", subtitle = "for movies passing and failing the iva_bechdel_v2 test") +
+  xlab("Proportion of female leading actors") +
+  ylab("Proportion of female supporting actors") 
+```
+
+This graph is still a scatterplot of the proportion of female leading actors and of the proportion of female supporting actors for 2016 top 50 movies, both passing or failing the iva_bechdel_v2 test. 
+
+This graph shows that 15 movies now pass this iva_bechdel_v2 test, that is to say that 15 movies have more than 50 % in leading roles and more than 30% women in supporting roles.
+
+We can refine once again this exporation by looking at the total number of leading actors and of supporting actors in each movies. Indeed, if a movie has only one lead actor, eliminating it just because this character is a man can prove a little bit strict.
+
+Let's have a look at which movies pass this test, considering their numbers of leading actors and their numbers of supporting actors.
+
+```{r}
+ggplot(data = test_table_v2) +
+  aes(x = nb_leading_cast, y = nb_supporting_cast, color = iva_bechdel_v2) +
+  geom_point(size = 3) +
+  ggtitle("2016 top 50 movies' number of leading and supporting actors", subtitle = "for movies passing and failing the iva_bechdel_v2 test") +
+  xlab("Number of leading actors") +
+  ylab("Number of supporting actors") 
+```
+
+This graph is a scatterplot of the number of leading actors and of supporting actors for 2016 top 50 movies, both passing or failing the iva_bechdel_v2 test. 
+
+We notice that some movies really have very few leading actors. For instance, for the movies which only have one leading actor, it is a bit harsh to consider that they fail the test just for having a man as only leading actor (which in a completely fair world could happen 50% of the time). 
+I will only consider this effect because when looking at the list of movies that pass this second test, we notice that some have a lot of leading actors (8 for Miss Peregrine???s Home for Peculiar Children) while some have very few (1 for The Boss), and some have a lot of supporting actors (110 for Batman v Superman: Dawn of Justice) while some have very few (5 for Moana). So there seems to be no obvious correlation between the number of actors and the result of this test.
+
+Therefore, for the six movies that have only one leading actor that is a man, we could just look at their number of supporting actors to decide whether they pass the test or not, and this is what we are going to do in Exploration 3.
+
+# Exploration 3
+
+I now want to explore "A films fails if less than 50 % of its leading actors are women or if less than 30% of its supporting actors are women, or just if less than 30% of its supporting actors are women if there is only one leading actor"
+
+```{r}
+test_table_v3 <- test_table_v2 %>% 
+  mutate(iva_bechdel_num_v3 = case_when(
+         (prop_female_leading >= 0.5 | nb_leading_cast == 1) & prop_female_supporting >= 0.3 ~ 1,
+         (prop_female_leading < 0.5 & nb_leading_cast > 1) | prop_female_supporting < 0.3 ~ 0
+         )) %>% 
+  mutate(iva_bechdel_v3 = case_when(
+         (prop_female_leading >= 0.5 | nb_leading_cast == 1) & prop_female_supporting >= 0.3 ~ "PASS",
+        (prop_female_leading < 0.5 & nb_leading_cast > 1) | prop_female_supporting < 0.3 ~ "FAIL"
+         ))
+test_table_v3
+```
+
+I want to check how many movies pass this test:
+
+```{r}
+test_table_v3 %>% summarise(nb_pass = sum(iva_bechdel_num_v3))
+```
+
+Now 18 movies pass this test. I want to check which are the 3 new movies that pass the test:
+
+```{r}
+test_table_v3 %>% filter(iva_bechdel_num_v3 == 1 & iva_bechdel_num_v2 == 0) 
+```
+
+```{r}
+ggplot(data = test_table_v3) +
+  aes(x = prop_female_leading, y = prop_female_supporting, color = iva_bechdel_v3) +
+  ylim(0,1) +
+  xlim(0,1) +
+  geom_point(size = 3) +
+  ggtitle("2016 top 50 movies' proportions of female leading and supporting actors", subtitle = "for movies passing and failing the iva_bechdel_v3 test") +
+  xlab("Proportion of female leading actors") +
+  ylab("Proportion of female supporting actors") 
+```
+
+This graph is still a scatterplot of the proportion of female leading actors and of the proportion of female supporting actors for 2016 top 50 movies, both passing or failing the iva_bechdel_v3 test. 
+
+This graph shows that 18 movies now pass this iva_bechdel_v3 test. Let's have a look at which movies pass this test, considering their numbers of leading actors and their numbers of supporting actors.
+
+```{r}
+ggplot(data = test_table_v3) +
+  aes(x = nb_leading_cast, y = nb_supporting_cast, color = iva_bechdel_v3) +
+  geom_point(size = 3) +
+  ggtitle("2016 top 50 movies' number of leading and supporting actors", subtitle = "for movies passing and failing the iva_bechdel_v3 test") +
+  xlab("Number of leading actors") +
+  ylab("Number of supporting actors") 
+```
+
+This graph is a scatterplot of the number of leading actors and of supporting actors for 2016 top 50 movies, both passing or failing the iva_bechdel_v3 test. 
+We don't see any obvious correlation between the number of supporting or leading actors and the success or failure at this test. 
+Therefore, this test does not seem obviously biaised and this is why I decide to stop my explorations here.
+
+# Comparison with other Bechdel tests
+
+To reflect on the efficiency of my new iva_bechdel_v3 test, I would like to compare its results with the results of other bechdel tests.
+Let's rank the movies according to the number of bechdel tests they pass out of 13.
+
+```{r}
+# Ranking the movies according to the number of bechdel tests they pass out of 13.
+new_bechdel_ordered <- new_bechdel %>% 
+  mutate(sum_of_scores = new_bechdel %>% select(-movie) %>% rowSums) %>% 
+  select(movie, sum_of_scores) %>% 
+  arrange(desc(sum_of_scores))
+# Displaying the results
+new_bechdel_ordered
+```
+
+What is striking is that some very high-ranked movies, such as Doctor Strange or The Secret Life of Pets, don't pass the iva_bechdel_v3. 
+What's more, some very low-ranked movies, such as Bad Moms, were one of the very first to pass the iva_bechdel_v3.
+
+# Conclusion: strengths and weaknesses of the iva_bechdel_v3 test
+
+  My hypothesis was right: less than 25 movies out of 50 pass this test, even after loosening the rule and lowering the standards twice.
+
+  I think the main strenghts of the iva_bechdel_v3 test is that it takes into account not only the leading actors, but also the supporting actors, which are an important factor since they contribute to inconsciously showing a vision of the world that is more masculine than the reality. What's more, this test accounts for the fact that some movies have very few leading actors (just one) and that this leading actor can very well be a man without raising questions about gender bias. The test is not obviously biaised in view of the data I had, since the scatter plot does not show any correlation between the number of actors and the results of the test.
+
+  However, this test shows some weaknesses as well:
+  Firstly, the distinction made between leading actors and supporting actors might be a bit artificial. I guess that all supporting actors do not have the same role and the same screen presence, and some might count more than others. This boils down to the level of granularity of the data.
+  Secondly, this test does not take into account the characters assigned to each actor (by lack of data) which is done by the original bechdel test ("do at least two women talk to each other about something other than men") and some other new bechdel tests. This might be interesting to look at because if there are a lot of women in a movie, but these women are looked down on and stereotyped, we might want to consider that such a movie fails the test.
+  Finally, this test does not look at what happens behind the camera. For this test I decided to focus on what is shown to the public, because I think that it is what actually broadcasts gender-biaised vision, but it seems obvious that this comes from behind the camera, that is to say from the lack of gender equality in  movie crews. I decided not to look at this because I wanted to focus on facts rather than on causes, but if one wanted to have a look further and to determine the exact reasons for this lack of gender equality in movies, it would be very interesting to also look at this data.
+  
+  To conclude, it seems quite hard to find a test that makes everyone agree. This makes me think that there is always some variables for which gender equality is not obtained yet, and that it is just a matter of priorities between these variables. This leads to the conclusion that Hollywood movies still have a long way to go towards the goal of broadcasting a real "gender-unbiaised" vision.
+
+# Ressources
+
+https://en.wikipedia.org/wiki/Cameo_appearance
+
+https://en.wikipedia.org/wiki/Ensemble_cast
+
+
